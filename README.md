@@ -65,9 +65,3 @@ We are finalizing
 
 The public release will follow soon.
 Johannes Kepler University Linz
-
-For questions regarding the dataset or the benchmark, feel free to open an issue or contact us.
-
----
-
-⭐ If you are interested in realistic sound event detection benchmarks, consider starring the repository to stay updated.
