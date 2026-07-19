@@ -1,0 +1,10 @@
+einops
+numpy
+pandas
+pytorch-lightning
+sed_scores_eval
+sebbs
+torch
+torchaudio
+transformers
+wandb

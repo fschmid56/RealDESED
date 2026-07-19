@@ -1,0 +1,6 @@
+data/
+runs/
+resources/
+.idea/
+__pycache__/
+*.py[cod]
