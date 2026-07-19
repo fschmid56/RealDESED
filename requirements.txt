@@ -4,7 +4,9 @@ pandas
 pytorch-lightning
 sed_scores_eval
 sebbs
+setuptools<81
 torch
 torchaudio
+torchcodec
 transformers
 wandb

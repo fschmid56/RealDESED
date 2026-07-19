@@ -83,6 +83,7 @@ else
 fi
 
 conda run -n "$CONDA_ENV_NAME" python -m pip install --upgrade pip
+conda install -y -n "$CONDA_ENV_NAME" -c conda-forge ffmpeg
 conda run -n "$CONDA_ENV_NAME" python -m pip install -r requirements.txt
 
 mkdir -p "$DOWNLOAD_DIR"

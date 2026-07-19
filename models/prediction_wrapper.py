@@ -46,23 +46,26 @@ class PredictionsWrapper(nn.Module):
         if not os.path.exists(ckpt_file):
             download_url_to_file(CHECKPOINT_URLS[checkpoint], ckpt_file)
         state_dict = torch.load(ckpt_file, map_location="cpu", weights_only=True)
-        keys_to_remove = [
+        keys_to_remove = {
             "weak_head.bias",
             "weak_head.weight",
             "strong_head.bias",
             "strong_head.weight",
-        ]
-        expected_missing = len(keys_to_remove)
+        }
 
-        # allow missing mel parameters for compatibility
-        num_mel_keys = len([key for key in self.state_dict() if 'mel_transform' in key])
-        if num_mel_keys > 0:
-            expected_missing += num_mel_keys
+        # Older released checkpoints may not include torchaudio mel-transform buffers.
+        allowed_missing = {key for key in self.state_dict() if "mel_transform" in key}
 
         state_dict = {k: v for k, v in state_dict.items() if k not in keys_to_remove}
         missing, unexpected = self.load_state_dict(state_dict, strict=False)
-        assert len(missing) == expected_missing
-        assert len(unexpected) == 0
+        unexpected = [key for key in unexpected if key not in keys_to_remove]
+        disallowed_missing = [key for key in missing if key not in allowed_missing]
+        if disallowed_missing or unexpected:
+            raise RuntimeError(
+                "Failed to load pretrained checkpoint "
+                f"{checkpoint!r}. Missing keys: {disallowed_missing}. "
+                f"Unexpected keys: {unexpected}."
+            )
 
     def separate_params(self):
         if hasattr(self.model, "separate_params"):
