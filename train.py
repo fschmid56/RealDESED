@@ -284,6 +284,7 @@ class PLModule(pl.LightningModule):
             ground_truth,
             durations,
             self.config.output_dir,
+            self.class_names,
         )
         print(f"Best cSEBBS validation PSDS values: {best_psds_values}")
 

@@ -149,7 +149,7 @@ def _install_import_stubs():
 
     csebbs = types.ModuleType("utils.csebbs")
     csebbs.apply_csebbs = lambda predictions, predictor, class_names: predictions
-    csebbs.tune_csebbs_predictor = lambda predictions, ground_truth, durations, output_dir: ("predictor", {})
+    csebbs.tune_csebbs_predictor = lambda predictions, ground_truth, durations, output_dir, class_names=None: ("predictor", {})
 
     inference = types.ModuleType("utils.inference")
     inference.sliding_window_inference = lambda **kwargs: torch.zeros(kwargs["num_classes"], 2)

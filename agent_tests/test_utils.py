@@ -48,7 +48,7 @@ except ModuleNotFoundError as exc:
 try:
     import utils.evaluation as evaluation_module
     from utils.augment import RandomResizeCrop, apply_mixup_spectrogram
-    from utils.csebbs import apply_csebbs, write_csebbs_inputs
+    from utils.csebbs import apply_csebbs, tune_csebbs_predictor, write_csebbs_inputs
     from utils.evaluation import (
         add_psds_logs,
         apply_median_filter,
@@ -442,6 +442,196 @@ class UtilsTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             apply_csebbs(predictions, None, CLASS_NAMES)
+
+    def test_apply_csebbs_subsets_scores_to_predictor_classes(self):
+        predictions = {
+            "b": pd.DataFrame(
+                {
+                    "onset": [0.0, 0.1],
+                    "offset": [0.1, 0.2],
+                    "bell": [0.9, 0.8],
+                    "coffee": [0.1, 0.2],
+                }
+            )
+        }
+
+        class FakeCsebbsPredictor:
+            sound_classes = ["bell"]
+
+            def predict(self, scores_dict):
+                self.received_columns = list(scores_dict["b"].columns)
+                return {"b": [(0.0, 0.2, "bell")]}
+
+        predictor = FakeCsebbsPredictor()
+        converted = apply_csebbs(predictions, predictor, CLASS_NAMES)
+
+        self.assertEqual(predictor.received_columns, ["onset", "offset", "bell"])
+        self.assertEqual(converted["b"]["bell"].tolist(), [1.0, 1.0])
+        self.assertEqual(converted["b"]["coffee"].tolist(), [0.0, 0.0])
+
+    def test_tune_csebbs_predictor_uses_classes_present_in_validation_ground_truth(self):
+        predictions = {
+            "b": pd.DataFrame(
+                {
+                    "onset": [0.0],
+                    "offset": [0.1],
+                    "bell": [0.9],
+                    "coffee": [0.2],
+                }
+            )
+        }
+        ground_truth = {"b": [(0.0, 0.1, "bell")]}
+        durations = {"b": 0.1}
+
+        class FakePredictor:
+            step_filter_length = 0.32
+            merge_threshold_abs = 0.15
+            merge_threshold_rel = 1.5
+
+            def predict(self, _scores_dict):
+                return {"b": []}
+
+        class FakeCSEBBsPredictor(FakePredictor):
+            def __init__(self, step_filter_length, merge_threshold_abs, merge_threshold_rel, sound_classes=None):
+                self.step_filter_length = step_filter_length
+                self.merge_threshold_abs = merge_threshold_abs
+                self.merge_threshold_rel = merge_threshold_rel
+                self.sound_classes = sound_classes
+
+        def fake_tune(**kwargs):
+            selected, values = kwargs["selection_fn"](
+                [(FakePredictor(), {"file_b": [(0.0, 0.1, "bell", 0.9)]})],
+                kwargs["ground_truth"],
+                kwargs["audio_durations"],
+            )
+            return selected, values
+
+        def fake_sed_scores_from_sebbs(_sebbs, sound_classes, audio_duration=None):
+            return {"class_name": sound_classes[0]}
+
+        def fake_psds(scores, **_kwargs):
+            return 0.0, {scores["class_name"]: 1.0}
+
+        fake_csebbs = types.SimpleNamespace(
+            tune=fake_tune,
+            CSEBBsPredictor=FakeCSEBBsPredictor,
+        )
+        fake_sed_scores_eval = types.SimpleNamespace(
+            intersection_based=types.SimpleNamespace(psds=fake_psds)
+        )
+        fake_sebbs = types.SimpleNamespace(csebbs=fake_csebbs)
+        fake_sebbs_utils = types.SimpleNamespace(sed_scores_from_sebbs=fake_sed_scores_from_sebbs)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "sebbs": fake_sebbs,
+                    "sebbs.utils": fake_sebbs_utils,
+                    "sed_scores_eval": fake_sed_scores_eval,
+                },
+            ):
+                predictor, best_values = tune_csebbs_predictor(
+                    predictions,
+                    ground_truth,
+                    durations,
+                    temp_dir,
+                    CLASS_NAMES,
+                )
+
+        self.assertEqual(best_values, {"bell": 1.0})
+        self.assertEqual(predictor.sound_classes, ["bell"])
+
+    def test_tune_csebbs_predictor_scores_missing_class_sebbs_as_zero(self):
+        predictions = {
+            "b": pd.DataFrame(
+                {
+                    "onset": [0.0],
+                    "offset": [0.1],
+                    "bell": [0.9],
+                    "coffee": [0.2],
+                }
+            )
+        }
+        ground_truth = {"b": [(0.0, 0.1, "bell"), (0.0, 0.1, "coffee")]}
+        durations = {"b": 0.1}
+
+        class FakePredictor:
+            sound_classes = None
+
+            def __init__(self, step_filter_length, merge_threshold_abs, merge_threshold_rel):
+                self.step_filter_length = step_filter_length
+                self.merge_threshold_abs = merge_threshold_abs
+                self.merge_threshold_rel = merge_threshold_rel
+
+            def predict(self, _scores_dict):
+                return {}
+
+        class FakeCSEBBsPredictor(FakePredictor):
+            def __init__(self, step_filter_length, merge_threshold_abs, merge_threshold_rel, sound_classes=None):
+                super().__init__(step_filter_length, merge_threshold_abs, merge_threshold_rel)
+                self.sound_classes = sound_classes
+
+        first_predictor = FakePredictor(0.32, 0.15, 1.5)
+        second_predictor = FakePredictor(0.64, 0.30, 3.0)
+
+        def fake_tune(**kwargs):
+            selected, values = kwargs["selection_fn"](
+                [
+                    (first_predictor, {"file_b": [(0.0, 0.1, "bell", 0.4)]}),
+                    (second_predictor, {"file_b": [(0.0, 0.1, "coffee", 0.8)]}),
+                ],
+                kwargs["ground_truth"],
+                kwargs["audio_durations"],
+            )
+            return selected, values
+
+        def fake_sed_scores_from_sebbs(sebbs, sound_classes, audio_duration=None):
+            class_name = sound_classes[0]
+            confidences = [
+                sebb[3]
+                for sebbs_for_audio in sebbs.values()
+                for sebb in sebbs_for_audio
+                if sebb[2] == class_name
+            ]
+            return {"class_name": class_name, "score": max(confidences)}
+
+        def fake_psds(scores, **_kwargs):
+            return 0.0, {scores["class_name"]: scores["score"]}
+
+        fake_csebbs = types.SimpleNamespace(
+            tune=fake_tune,
+            CSEBBsPredictor=FakeCSEBBsPredictor,
+            select_best_psds=lambda *_args, **_kwargs: None,
+        )
+        fake_sed_scores_eval = types.SimpleNamespace(
+            intersection_based=types.SimpleNamespace(psds=fake_psds)
+        )
+        fake_sebbs = types.SimpleNamespace(csebbs=fake_csebbs)
+        fake_sebbs_utils = types.SimpleNamespace(sed_scores_from_sebbs=fake_sed_scores_from_sebbs)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "sebbs": fake_sebbs,
+                    "sebbs.utils": fake_sebbs_utils,
+                    "sed_scores_eval": fake_sed_scores_eval,
+                },
+            ):
+                predictor, best_values = tune_csebbs_predictor(
+                    predictions,
+                    ground_truth,
+                    durations,
+                    temp_dir,
+                    CLASS_NAMES,
+                )
+
+        self.assertEqual(best_values, {"bell": 0.4, "coffee": 0.8})
+        self.assertEqual(predictor.step_filter_length, {"bell": 0.32, "coffee": 0.64})
+        self.assertEqual(predictor.merge_threshold_abs, {"bell": 0.15, "coffee": 0.3})
+        self.assertEqual(predictor.merge_threshold_rel, {"bell": 1.5, "coffee": 3.0})
+        self.assertEqual(predictor.sound_classes, CLASS_NAMES)
 
 
 if __name__ == "__main__":
