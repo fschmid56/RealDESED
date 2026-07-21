@@ -43,6 +43,21 @@ Activate the environment:
 conda activate realdesed
 ```
 
+If an existing environment fails with `ModuleNotFoundError: No module named 'pkg_resources'`,
+downgrade `setuptools` inside that environment:
+
+```bash
+python -m pip install "setuptools<81"
+```
+
+If training fails in a DataLoader worker with `TorchCodec is required for
+load_with_torchcodec`, install the missing audio decoder dependencies:
+
+```bash
+conda install -y -c conda-forge ffmpeg
+python -m pip install torchcodec
+```
+
 To reproduce the weighted annotator labels used by `Weighted Soft` ($\alpha$=16), compute the annotator quality scores:
 
 ```bash
@@ -57,8 +72,6 @@ To run the ATST-F baseline with weighted soft labels:
 
 This uses the reviewed training annotations where available and corresponds to row `#10`, `Weighted + Reviewed`, in Table 1 of the arXiv paper.
 
-Weights & Biases run: coming soon
-
 ```bash
 python train.py \
   --dataset_path data \
@@ -72,8 +85,6 @@ python train.py \
 
 To reproduce the majority-voting results:
 
-Weights & Biases run: coming soon
-
 ```bash
 python train.py \
   --dataset_path data \
@@ -82,6 +93,8 @@ python train.py \
   --wandb_project RealDESED \
   --train_annotation_aggregation Majority
 ```
+
+Weights & Biases report for both baseline experiments: [RealDESED baselines](https://wandb.ai/cp_tobi/RealDESED/reports/RealDESED-baselines--VmlldzoxNzU0ODI2NQ?accessToken=yl6qt5jwj38y612cuvv39gsotv1wpo8k37pehb9scb4jjxv5nwyoj89h8mrcsm9l)
 
 Hardware requirements for reproducing the baseline experiments are modest: an NVIDIA GeForce RTX 2080 Ti is sufficient to run the baseline in less than two hours.
 
