@@ -2,7 +2,7 @@
 
 This repository contains the official baseline training and evaluation code for the RealDESED domestic sound event detection benchmark.
 
-Dataset: [Zenodo](https://zenodo.org/records/20056072) | Paper: arXiv coming soon; currently under review for the DCASE Workshop 2026
+Dataset: [Zenodo](https://zenodo.org/records/20056072) | Paper: [arXiv](https://arxiv.org/abs/2607.16736); currently under review for the DCASE Workshop 2026
 
 ## Dataset at a Glance
 
@@ -181,7 +181,25 @@ python compute_annotator_score.py
 
 ## Citations
 
-If you use the RealDESED dataset or this code, please cite the RealDESED paper, which is about to appear on arXiv and is currently under review for the DCASE Workshop 2026.
+If you use the RealDESED dataset or this code, please cite the RealDESED paper, which is currently under review for the DCASE Workshop 2026.
+
+```bibtex
+@misc{schmid2026realdesed,
+  author       = {Florian Schmid and
+                  Paul Primus and
+                  Alexander Fichtinger and
+                  Tara Jadidi and
+                  Tobias Morocutti and
+                  Gerhard Widmer},
+  title        = {{RealDESED}: A Real-World Domestic Sound Event Detection Benchmark},
+  year         = {2026},
+  eprint       = {2607.16736},
+  archivePrefix = {arXiv},
+  primaryClass = {eess.AS},
+  url          = {https://arxiv.org/abs/2607.16736},
+  note         = {Under review for the DCASE Workshop 2026}
+}
+```
 
 If you use the AudioSet Strong pre-trained baseline, please also cite:
 
