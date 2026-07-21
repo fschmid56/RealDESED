@@ -16,7 +16,6 @@ from dataset.dataset import RealDESEDDataset
 from models.atstframe.ATSTF_wrapper import ATSTWrapper
 from models.prediction_wrapper import PredictionsWrapper
 from utils.augment import RandomResizeCrop, apply_mixup_spectrogram
-from utils.csebbs import apply_csebbs, tune_csebbs_predictor
 from utils.evaluation import (
     apply_median_filter,
     build_metric_logs,
@@ -36,14 +35,12 @@ class PLModule(pl.LightningModule):
         recording_environment_class_names,
         pretrained_checkpoint="ATST-F_strong_1",
         frame_hz=25,
-        use_csebbs=True,
     ):
         super().__init__()
         self.config = config
         self.class_names = list(class_names)
         self.recording_environment_class_names = list(recording_environment_class_names)
         self.frame_hz = frame_hz
-        self.use_csebbs = use_csebbs
 
         backbone = ATSTWrapper()
 
@@ -72,8 +69,6 @@ class PLModule(pl.LightningModule):
         self.test_device_placements = {}
         self.test_recording_environment_labels = {}
         self.test_recording_device_categories = {}
-        self.csebbs_predictor = None
-        self.csebbs_tuning_dataloader = None
 
     def forward(self, audio):
         if audio.dim() == 3:
@@ -213,81 +208,6 @@ class PLModule(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         self._shared_eval_step(batch, "test")
 
-    def _use_csebbs_for_stage(self, stage):
-        return stage == "test" and self.use_csebbs
-
-    @torch.no_grad()
-    def _collect_raw_predictions(self, dataloader):
-        predictions = {}
-        ground_truth = {}
-        durations = {}
-        device = next(self.parameters()).device
-        was_training = self.training
-        self.eval()
-
-        for batch in dataloader:
-            audios = batch["audio"]
-            labels = batch["labels"]
-            timestamps = batch["timestamps"]
-            filenames = batch["filename"]
-            durations_batch = batch["duration"]
-            batch_events = batch["events"]
-
-            for i in range(audios.shape[0]):
-                ts = timestamps[i]
-                valid_len = (ts >= 0).sum().item()
-                label = labels[i, :, :valid_len]
-                ts = ts[:valid_len]
-
-                frame_duration = 1.0 / self.frame_hz
-                audio_len = int((ts[-1].item() + 0.5 * frame_duration) * self.config.sample_rate)
-                audio = audios[i, :, :audio_len].to(device)
-
-                logits = self.sliding_window_inference(audio)
-                min_len = min(logits.shape[1], label.shape[1])
-                probs = torch.sigmoid(logits[:, :min_len])
-                ts_aligned = ts[:min_len].to(probs.device)
-
-                score_df = preds_to_score_df(
-                    probs,
-                    ts_aligned,
-                    self.class_names,
-                    frame_hz=self.frame_hz,
-                )
-                score_df = score_df.sort_index()
-                score_df = score_df[~score_df.index.duplicated(keep="first")]
-
-                file_id = filenames[i].replace(".wav", "")
-                predictions[file_id] = score_df.copy()
-                ground_truth[file_id] = events_to_tuples(batch_events[i])
-                durations[file_id] = (
-                    durations_batch[i].item()
-                    if isinstance(durations_batch, torch.Tensor)
-                    else durations_batch[i]
-                )
-
-        if was_training:
-            self.train()
-
-        return predictions, ground_truth, durations
-
-    def _fit_csebbs_predictor(self):
-        if self.csebbs_tuning_dataloader is None:
-            raise ValueError("csebbs_tuning_dataloader must be set before testing with cSEBBS.")
-
-        print("\nCollecting validation predictions for cSEBBS tuning...")
-        predictions, ground_truth, durations = self._collect_raw_predictions(self.csebbs_tuning_dataloader)
-
-        print("Tuning cSEBBS on validation predictions...")
-        self.csebbs_predictor, best_psds_values = tune_csebbs_predictor(
-            predictions,
-            ground_truth,
-            durations,
-            self.config.output_dir,
-            self.class_names,
-        )
-        print(f"Best cSEBBS validation PSDS values: {best_psds_values}")
-
     def _log_epoch_metrics(self, stage):
         predictions = self.val_predictions if stage == "val" else self.test_predictions
         ground_truth = self.val_ground_truth if stage == "val" else self.test_ground_truth
@@ -307,12 +227,12 @@ class PLModule(pl.LightningModule):
         if len(predictions) == 0:
             return
 
-        metric_sets = [(stage, apply_median_filter(predictions, self.class_names, self.config.median_window))]
-        if self._use_csebbs_for_stage(stage):
-            metric_sets = [
-                ("test_median", metric_sets[0][1]),
-                ("test_csebbs", apply_csebbs(predictions, self.csebbs_predictor, self.class_names)),
-            ]
+        median_predictions = apply_median_filter(
+            predictions,
+            self.class_names,
+            self.config.median_window,
+        )
+        metric_sets = [(stage, median_predictions)]
 
         logs = {}
         psds1_per_class = {}
@@ -355,10 +275,6 @@ class PLModule(pl.LightningModule):
     def on_validation_epoch_end(self):
         self._log_epoch_metrics("val")
 
-    def on_test_epoch_start(self):
-        if self._use_csebbs_for_stage("test") and self.csebbs_predictor is None:
-            self._fit_csebbs_predictor()
-
     def on_test_epoch_end(self):
         self._log_epoch_metrics("test")
 
@@ -382,12 +298,10 @@ def train(
     pretrained_checkpoint="ATST-F_strong_1",
     pretrained="strong",
     frame_hz=25,
-    use_csebbs=True,
 ):
     config.model_name = model_name
     config.pretrained = pretrained
     config.frame_hz = frame_hz
-    config.csebbs_apply = use_csebbs
 
     experiment_dump_dir = os.path.join(config.output_dir, "experiment_dumps")
     wandb_dir = os.path.join(experiment_dump_dir, "wandb")
@@ -466,7 +380,6 @@ def train(
         environment_class_names,
         pretrained_checkpoint=pretrained_checkpoint,
         frame_hz=frame_hz,
-        use_csebbs=use_csebbs,
     )
 
     checkpoint_callback = ModelCheckpoint(
@@ -511,10 +424,7 @@ def train(
         recording_environment_class_names=environment_class_names,
         pretrained_checkpoint=pretrained_checkpoint,
         frame_hz=frame_hz,
-        use_csebbs=use_csebbs,
     )
-    if use_csebbs:
-        best_model.csebbs_tuning_dataloader = val_dl
     trainer.test(best_model, dataloaders=test_dl)
 
     wandb.finish()
@@ -583,7 +493,6 @@ if __name__ == "__main__":
     parser.add_argument("--mixup_alpha", type=float, default=0.2)
     parser.add_argument("--freq_warp_p", type=float, default=0.5)
     parser.add_argument("--median_window", type=int, default=9)
-
     args = parser.parse_args()
     if not 0.0 <= args.triangular_filter_floor <= 1.0:
         parser.error("--triangular_filter_floor must be in [0, 1]")

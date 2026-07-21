@@ -147,10 +147,6 @@ def _install_import_stubs():
     evaluation.recording_environment_class_names = lambda *datasets: ["kitchen", "hallway"]
     evaluation.store_metadata = lambda *args, **kwargs: None
 
-    csebbs = types.ModuleType("utils.csebbs")
-    csebbs.apply_csebbs = lambda predictions, predictor, class_names: predictions
-    csebbs.tune_csebbs_predictor = lambda predictions, ground_truth, durations, output_dir, class_names=None: ("predictor", {})
-
     inference = types.ModuleType("utils.inference")
     inference.sliding_window_inference = lambda **kwargs: torch.zeros(kwargs["num_classes"], 2)
 
@@ -162,7 +158,6 @@ def _install_import_stubs():
     sys.modules["models.atstframe.ATSTF_wrapper"] = atst_module
     sys.modules["models.prediction_wrapper"] = prediction_module
     sys.modules["utils.evaluation"] = evaluation
-    sys.modules["utils.csebbs"] = csebbs
     sys.modules["utils.inference"] = inference
 
 
@@ -228,15 +223,12 @@ class FakeTrainingPLModule:
         recording_environment_class_names,
         pretrained_checkpoint,
         frame_hz,
-        use_csebbs,
     ):
         self.config = config
         self.class_names = list(class_names)
         self.recording_environment_class_names = list(recording_environment_class_names)
         self.pretrained_checkpoint = pretrained_checkpoint
         self.frame_hz = frame_hz
-        self.use_csebbs = use_csebbs
-        self.csebbs_tuning_dataloader = None
         FakeTrainingPLModule.instances.append(self)
 
     @classmethod
@@ -305,7 +297,6 @@ class TrainPyTest(unittest.TestCase):
             class_names=CLASS_NAMES,
             recording_environment_class_names=["kitchen"],
             frame_hz=4,
-            use_csebbs=False,
         )
         batch = {
             "soft_labels": torch.ones(1, 2, 4),
@@ -329,7 +320,6 @@ class TrainPyTest(unittest.TestCase):
             class_names=CLASS_NAMES,
             recording_environment_class_names=["kitchen"],
             frame_hz=4,
-            use_csebbs=False,
         )
         module.trainer = types.SimpleNamespace(estimated_stepping_batches=123)
 
@@ -354,13 +344,11 @@ class TrainPyTest(unittest.TestCase):
                             pretrained_checkpoint="unit.ckpt",
                             pretrained="unit-pretrained",
                             frame_hz=50,
-                            use_csebbs=True,
                         )
 
         self.assertEqual(config.model_name, "UnitModel")
         self.assertEqual(config.pretrained, "unit-pretrained")
         self.assertEqual(config.frame_hz, 50)
-        self.assertTrue(config.csebbs_apply)
 
         self.assertEqual([dataset.split for dataset in FakeDataset.calls], ["train", "validation", "test"])
         train_ds, val_ds, test_ds = FakeDataset.calls
@@ -410,24 +398,8 @@ class TrainPyTest(unittest.TestCase):
         self.assertEqual(len(FakeTrainingPLModule.loaded_instances), 1)
         best_model = FakeTrainingPLModule.loaded_instances[0]
         self.assertEqual(best_model.loaded_checkpoint_path, checkpoint.best_model_path)
-        self.assertIs(best_model.csebbs_tuning_dataloader, val_dl)
         self.assertEqual(trainer.test_calls, [(best_model, test_dl)])
         self.assertEqual(train_module.wandb.finish_calls, 1)
-
-    def test_train_does_not_set_csebbs_tuning_dataloader_when_disabled(self):
-        with tempfile.TemporaryDirectory() as output_dir:
-            config = make_config(output_dir)
-
-            with mock.patch.object(train_module, "RealDESEDDataset", FakeDataset):
-                with mock.patch.object(train_module, "DataLoader", FakeDataLoader):
-                    with mock.patch.object(train_module, "PLModule", FakeTrainingPLModule):
-                        train_module.train(config, use_csebbs=False)
-
-        best_model = FakeTrainingPLModule.loaded_instances[0]
-        self.assertFalse(config.csebbs_apply)
-        self.assertIsNone(best_model.csebbs_tuning_dataloader)
-        self.assertFalse(best_model.use_csebbs)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

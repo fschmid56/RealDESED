@@ -96,9 +96,8 @@ The most important logged metrics are:
 - `val/psds1_macro` and `val/psds2_macro`: validation PSDS macro scores used to monitor model quality; the best checkpoint is selected by `val/psds1_macro`.
 - `val/pauroc`: validation partial AUROC.
 - `val_classwise/psds1/*` and `val_classwise/psds2/*`: class-wise validation PSDS scores.
-- `test_median/*`: test-set metrics after applying the global median filter controlled by `--median_window`.
-- `test_csebbs/*`: test-set metrics after tuning cSEBBS on validation predictions and applying it to the test predictions.
-- `test_median_classwise/*` and `test_csebbs_classwise/*`: class-wise test metrics for the two post-processing settings.
+- `test/*`: test-set metrics after applying the global median filter controlled by `--median_window`.
+- `test_classwise/*`: class-wise test metrics.
 
 Grouped PSDS metrics are also logged for recording metadata subsets such as device placement, device category, and recording environment.
 
@@ -136,7 +135,7 @@ The main training entry point is `train.py`. The most commonly changed arguments
 - `--n_epochs`, `--max_lr`, `--weight_decay`, `--warmup_steps`, and `--accumulate_grad_batches`: optimization settings.
 - `--train_annotation_aggregation`, `--annotator_alpha`, and `--include_reviewed_train_files`: training-label construction settings.
 - `--chunk_size`, `--hop_size`, `--inference_batch_size`, and `--sliding_window_stitching`: long-form inference settings.
-- `--median_window`: median-filter post-processing window used for the `test_median/*` results.
+- `--median_window`: median-filter post-processing window.
 
 Run `python train.py --help` for the complete list of available options.
 
